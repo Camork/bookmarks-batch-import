@@ -15,7 +15,9 @@
 package com.camork.portlet.action;
 
 import com.liferay.bookmarks.constants.BookmarksPortletKeys;
+import com.liferay.bookmarks.exception.EntryURLException;
 import com.liferay.bookmarks.model.BookmarksEntry;
+import com.liferay.bookmarks.model.BookmarksFolder;
 import com.liferay.bookmarks.service.BookmarksEntryService;
 import com.liferay.bookmarks.service.BookmarksFolderService;
 import com.liferay.portal.kernel.io.ByteArrayFileInputStream;
@@ -79,16 +81,35 @@ public class ImportEntrysMVCActionCommand extends BaseMVCActionCommand {
 					data = FileUtil.getBytes(inputStream);
 					content = new String(data);
 
+					Map<String, String> urlData = new HashMap<>();
+					Map<String, Map<String, String>> bookmarks = new HashMap<>();
+
 					Document doc = Jsoup.parse(content);
 
-					Elements linkElements = doc.select("dt a");
+					Elements bookmarksBar = doc.select("body > dl > dt > dl > dt > a");
 
-					Map<String, String> bookmarks = new HashMap<>();
+					if (bookmarksBar.size() > 0) {
+						for (Element e : bookmarksBar) {
+							urlData.put(e.text(), e.attr("href"));
+						}
+						bookmarks.put("Bookmarks bar", urlData);
+					}
 
-					for (Element e : linkElements)
-						bookmarks.put(e.text(), e.attr("abs:href"));
+					Elements folderTitles = doc.select("body > dl > dt > dl > dt > h3");
+					Elements subFolders = doc.select("body > dl > dt > dl > dt > dl");
 
-					updateEntry(actionRequest, bookmarks);
+					for (int i = 0; i < folderTitles.size(); i++) {
+						Elements subUrls = subFolders.get(i).select("a");
+						urlData = new HashMap<>();
+
+						for (Element e : subUrls) {
+							urlData.put(e.text(), e.attr("href"));
+						}
+
+						bookmarks.put(folderTitles.get(i).text(), urlData);
+					}
+
+					updateEntries(actionRequest, bookmarks);
 
 				}
 				catch (IOException e) {
@@ -101,7 +122,7 @@ public class ImportEntrysMVCActionCommand extends BaseMVCActionCommand {
 		}
 	}
 
-	protected void updateEntry(ActionRequest actionRequest, Map<String, String> data) throws Exception {
+	protected void updateEntries(ActionRequest actionRequest, Map<String, Map<String, String>> data) throws Exception {
 
 		ThemeDisplay themeDisplay = (ThemeDisplay) actionRequest.getAttribute(WebKeys.THEME_DISPLAY);
 
@@ -111,21 +132,58 @@ public class ImportEntrysMVCActionCommand extends BaseMVCActionCommand {
 		ServiceContext serviceContext =
 			ServiceContextFactory.getInstance(BookmarksEntry.class.getName(), actionRequest);
 
-		for (Map.Entry<String, String> mapEntry : data.entrySet()) {
-			_bookmarksEntryService.addEntry(
-				groupId, folderId, mapEntry.getKey(), mapEntry.getValue(), "", serviceContext
-			);
+		for (Map.Entry<String, Map<String, String>> mapEntry : data.entrySet()) {
+
+			if (mapEntry.getKey().equals("Bookmarks bar")) {
+
+				Map<String, String> urls = mapEntry.getValue();
+
+				for (Map.Entry<String, String> urlsEntry : urls.entrySet()) {
+					_bookmarksEntryService.addEntry(
+						groupId, folderId, urlsEntry.getKey(), urlsEntry.getValue(), "", serviceContext
+					);
+				}
+
+			}
+			else {
+				BookmarksFolder folder =
+					_bookmarksFolderService.addFolder(folderId, mapEntry.getKey(), "", serviceContext);
+
+				long tempFolderId = folder.getFolderId();
+
+				Map<String, String> urls = mapEntry.getValue();
+
+				for (Map.Entry<String, String> urlsEntry : urls.entrySet()) {
+					System.out.println(urlsEntry.getKey());
+
+					try {
+						_bookmarksEntryService.addEntry(
+							groupId, tempFolderId, urlsEntry.getKey(), urlsEntry.getValue(), "", serviceContext
+						);
+					}
+					catch (Exception e) {
+
+					}
+
+				}
+			}
 		}
 
 	}
 
 	@Reference(unbind = "-")
 	protected void setBookmarksEntryService(BookmarksEntryService bookmarksEntryService) {
-
 		_bookmarksEntryService = bookmarksEntryService;
 	}
 
+	@Reference(unbind = "-")
+	protected void setBookmarksFolderService(
+		BookmarksFolderService bookmarksFolderService) {
+		_bookmarksFolderService = bookmarksFolderService;
+	}
+	
 	private BookmarksEntryService _bookmarksEntryService;
+	private BookmarksFolderService _bookmarksFolderService;
 
 	@Reference
 	private Http _http;
